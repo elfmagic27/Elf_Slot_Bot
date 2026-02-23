@@ -107,7 +107,6 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
         key_data = keys_col.find_one({"key": key, "active": True})
         if not key_data:
             return await interaction.response.send_message("Invalid or used key.", ephemeral=True)
-
         duration_td = parse_time(key_data["duration"])
         expiry_time = datetime.datetime.utcnow() + duration_td
         category = bot.get_channel(CATEGORY_ID)
@@ -118,7 +117,6 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
         channel = await interaction.guild.create_text_channel(
             name=f"slot-{interaction.user.name}", category=category, overwrites=overwrites
         )
-
         slots_col.insert_one({
             "channel_id": channel.id,
             "owner_id": interaction.user.id,
@@ -130,7 +128,6 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
             "key_used": key
         })
         keys_col.update_one({"key": key}, {"$set": {"active": False}})
-
         total_pings = key_data["everyone"] + key_data["here"]
         embed = discord.Embed(title="Slot Activated", color=0x2ecc71)
         embed.add_field(name="Slot Owner", value=interaction.user.name)
