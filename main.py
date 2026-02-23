@@ -220,6 +220,45 @@ async def deleteall(interaction: discord.Interaction):
         except: pass
     await interaction.response.send_message(f"✅ Deleted {deleted} messages.", ephemeral=True)
 
+# ========== ADD PINGS ==========
+@bot.tree.command(name="pingsadd", description="Add extra pings to a slot", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(everyone="Number of @everyone pings to add", here="Number of @here pings to add")
+async def pingsadd(interaction: discord.Interaction, everyone: int = 0, here: int = 0):
+
+    if interaction.user.id != OWNER_ID and not await is_admin(interaction.user.id):
+        return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
+
+    slot = slots_col.find_one({"channel_id": interaction.channel.id})
+    if not slot:
+        return await interaction.response.send_message("This is not a slot channel.", ephemeral=True)
+
+    new_everyone = slot.get("everyone_left", 0) + max(everyone, 0)
+    new_here = slot.get("here_left", 0) + max(here, 0)
+
+    slots_col.update_one(
+        {"channel_id": interaction.channel.id},
+        {"$set": {
+            "everyone_left": new_everyone,
+            "here_left": new_here
+        }}
+    )
+
+    total_left = new_everyone + new_here
+
+    # Update slot info embed
+    channel = bot.get_channel(slot["channel_id"])
+    async for msg in channel.history(limit=50):
+        if msg.embeds and msg.embeds[0].title == "Slot Activated":
+            embed = msg.embeds[0]
+            embed.set_field_at(3, name="Total Pings Left", value=str(total_left), inline=False)
+            await msg.edit(embed=embed)
+            break
+
+    await interaction.response.send_message(
+        f"✅ Added {everyone} @everyone and {here} @here pings.\nTotal now: {total_left}",
+        ephemeral=True
+    )
+    
 # ========== CHECK EXPIRY ==========
 @tasks.loop(minutes=1)
 async def check_expiry():
