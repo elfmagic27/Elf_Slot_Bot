@@ -9,7 +9,6 @@ import asyncio
 import certifi
 from pymongo import MongoClient
 
-# ================= ENV VARIABLES =================
 TOKEN = os.getenv("TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 GUILD_ID = 1289578124463308840
@@ -22,17 +21,12 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
-# ================= MONGODB =================
-try:
-    client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
-    db = client.slotbot
-    slots_col = db.slots
-    keys_col = db.keys
-    admins_col = db.admins
-    print("✅ MongoDB connected successfully")
-except Exception as e:
-    print("❌ MongoDB connection failed:", e)
-    raise e
+# ================= MONGO =================
+client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
+db = client.slotbot
+slots_col = db.slots
+keys_col = db.keys
+admins_col = db.admins
 
 # ================= HELPERS =================
 def generate_key():
@@ -48,6 +42,11 @@ def parse_time(duration):
         return datetime.timedelta(days=int(duration[:-1]))
     return None
 
+def is_owner_or_admin(user_id):
+    if user_id == OWNER_ID or admins_col.find_one({"user_id": user_id}):
+        return True
+    return False
+
 # ================= READY =================
 @bot.event
 async def on_ready():
@@ -59,10 +58,8 @@ async def on_ready():
 @bot.tree.command(name="createkey", description="Create slot key", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(duration="Example: 30m, 2h, 7d", everyone="Everyone pings", here="Here pings")
 async def createkey(interaction: discord.Interaction, duration: str, everyone: int, here: int):
-    if interaction.user.id != OWNER_ID:
-        cursor_check = admins_col.find_one({"user_id": interaction.user.id})
-        if not cursor_check:
-            return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
+    if not is_owner_or_admin(interaction.user.id):
+        return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
     key = generate_key()
     keys_col.insert_one({"key_code": key, "duration": duration, "everyone": everyone, "here": here, "active": 1})
     await interaction.response.send_message(f"Key Created: `{key}`", ephemeral=True)
@@ -95,21 +92,20 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
             overwrites=overwrites
         )
 
+        slot_info_msg = await channel.send(embed=discord.Embed(title="Slot Activated",
+                                                               description=f"Expires: {expiry_str}",
+                                                               color=0x2ecc71))
+
         slots_col.insert_one({
             "channel_id": channel.id,
             "owner_id": interaction.user.id,
             "expiry": expiry_str,
             "everyone_left": data['everyone'],
             "here_left": data['here'],
-            "key_used": key
+            "key_used": key,
+            "info_msg_id": slot_info_msg.id
         })
-
         keys_col.update_one({"key_code": key}, {"$set": {"active": 0}})
-
-        embed = discord.Embed(title="Slot Activated",
-                              description=f"Expires: {expiry_str}",
-                              color=0x2ecc71)
-        await channel.send(embed=embed)
         await interaction.response.send_message(f"Slot created: {channel.mention}", ephemeral=True)
 
 class KeyPanel(discord.ui.View):
@@ -119,11 +115,8 @@ class KeyPanel(discord.ui.View):
 
 @bot.tree.command(name="sendpanel", description="Send key panel", guild=discord.Object(id=GUILD_ID))
 async def sendpanel(interaction: discord.Interaction):
-    cursor_check = None
-    if interaction.user.id != OWNER_ID:
-        cursor_check = admins_col.find_one({"user_id": interaction.user.id})
-        if not cursor_check:
-            return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
+    if not is_owner_or_admin(interaction.user.id):
+        return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
     embed = discord.Embed(title="Slot Key System",
                           description="Click below to activate your slot",
                           color=0x3498db)
@@ -134,12 +127,8 @@ async def sendpanel(interaction: discord.Interaction):
 @bot.tree.command(name="deletekey", description="Delete key and slot", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(key="Enter key")
 async def deletekey(interaction: discord.Interaction, key: str):
-    cursor_check = None
-    if interaction.user.id != OWNER_ID:
-        cursor_check = admins_col.find_one({"user_id": interaction.user.id})
-        if not cursor_check:
-            return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
-
+    if not is_owner_or_admin(interaction.user.id):
+        return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
     slot = slots_col.find_one({"key_used": key})
     if slot:
         channel = bot.get_channel(slot['channel_id'])
@@ -154,7 +143,7 @@ async def deletekey(interaction: discord.Interaction, key: str):
 @app_commands.describe(user="User to make admin")
 async def adminadd(interaction: discord.Interaction, user: discord.Member):
     if interaction.user.id != OWNER_ID:
-        return await interaction.response.send_message("Only owner can add admin.", ephemeral=True)
+        return await interaction.response.send_message("Owner only.", ephemeral=True)
     admins_col.update_one({"user_id": user.id}, {"$set": {"user_id": user.id}}, upsert=True)
     await interaction.response.send_message(f"{user.mention} is now an admin.", ephemeral=True)
 
@@ -162,23 +151,58 @@ async def adminadd(interaction: discord.Interaction, user: discord.Member):
 @app_commands.describe(user="User to remove admin")
 async def removeadmin(interaction: discord.Interaction, user: discord.Member):
     if interaction.user.id != OWNER_ID:
-        return await interaction.response.send_message("Only owner can remove admin.", ephemeral=True)
+        return await interaction.response.send_message("Owner only.", ephemeral=True)
     admins_col.delete_one({"user_id": user.id})
     await interaction.response.send_message(f"{user.mention} removed from admins.", ephemeral=True)
 
-# ================= PINGS =================
+# ================= KEY PINGS =================
+@bot.tree.command(name="keypingadd", description="Add pings to a slot", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(channel="Slot channel", type="everyone/here", amount="Number of pings to add")
+async def keypingadd(interaction: discord.Interaction, channel: discord.TextChannel, type: str, amount: int):
+    slot = slots_col.find_one({"channel_id": channel.id})
+    if not slot:
+        return await interaction.response.send_message("This channel is not a slot.", ephemeral=True)
+    if interaction.user.id != slot['owner_id'] and not is_owner_or_admin(interaction.user.id):
+        return await interaction.response.send_message("Only owner/admin can add pings.", ephemeral=True)
+
+    type = type.lower()
+    if type == "everyone":
+        slots_col.update_one({"channel_id": channel.id}, {"$inc": {"everyone_left": amount}})
+    elif type == "here":
+        slots_col.update_one({"channel_id": channel.id}, {"$inc": {"here_left": amount}})
+    else:
+        return await interaction.response.send_message("Type must be 'everyone' or 'here'.", ephemeral=True)
+    await interaction.response.send_message(f"Added {amount} {type} ping(s) to {channel.mention}.", ephemeral=True)
+
+# ================= DELETE ALL =================
+@bot.tree.command(name="deleteall", description="Delete all messages except slot info", guild=discord.Object(id=GUILD_ID))
+async def deleteall(interaction: discord.Interaction):
+    slot = slots_col.find_one({"channel_id": interaction.channel.id})
+    if not slot:
+        return await interaction.response.send_message("This is not a slot channel.", ephemeral=True)
+    if interaction.user.id != slot['owner_id'] and not is_owner_or_admin(interaction.user.id):
+        return await interaction.response.send_message("Only owner/admin can delete messages.", ephemeral=True)
+
+    messages = []
+    async for msg in interaction.channel.history(limit=None):
+        if msg.id != slot.get("info_msg_id"):
+            messages.append(msg)
+    if messages:
+        await interaction.channel.delete_messages(messages)
+    await interaction.response.send_message("All messages deleted except slot info.", ephemeral=True)
+
+# ================= PINGS HANDLER =================
 async def handle_ping(ctx, ping_type):
     slot = slots_col.find_one({"channel_id": ctx.channel.id})
     if not slot:
         return await ctx.send("This is not a slot channel.")
-
     owner_id = slot['owner_id']
     everyone_left = slot['everyone_left']
     here_left = slot['here_left']
 
     if ctx.author.id != owner_id:
-        if not admins_col.find_one({"user_id": ctx.author.id}):
-            return await ctx.send("Only slot owner or admin can use pings.")
+        if not is_owner_or_admin(ctx.author.id):
+            return await ctx.send("Only slot owner/admin can ping.")
 
     remaining = 0
     if ping_type == "everyone":
@@ -194,25 +218,25 @@ async def handle_ping(ctx, ping_type):
         remaining = here_left - 1
         slots_col.update_one({"channel_id": ctx.channel.id}, {"$set": {"here_left": remaining}})
 
-    # Thread reminder and auto-delete
+    # Thread reminder + auto-delete thread + system message
+    thread_msg = await ctx.channel.send(f"Starting thread reminder for <@{owner_id}>")
     thread = await ctx.channel.create_thread(name="Ping Reminder", type=discord.ChannelType.public_thread, auto_archive_duration=60)
     await thread.send(f"<@{owner_id}> You have **{remaining} {ping_type} pings left.**")
     await asyncio.sleep(60)
     try:
         await thread.delete()
-    except:
-        pass
+        await thread_msg.delete()
+    except: pass
 
 @bot.command()
 async def everyone(ctx): await handle_ping(ctx, "everyone")
 @bot.command()
 async def here(ctx): await handle_ping(ctx, "here")
 
-# ================= RUN BOT =================
+# ================= EXPIRY CHECK =================
 @tasks.loop(minutes=1)
 async def check_expiry():
-    all_slots = list(slots_col.find({}))
-    for slot in all_slots:
+    for slot in slots_col.find({}):
         expiry_time = datetime.datetime.strptime(slot['expiry'], "%d %B %Y | %H:%M UTC")
         if datetime.datetime.utcnow() > expiry_time:
             channel = bot.get_channel(slot['channel_id'])
@@ -220,4 +244,5 @@ async def check_expiry():
                 await channel.delete()
             slots_col.delete_one({"channel_id": slot['channel_id']})
 
+# ================= RUN =================
 bot.run(TOKEN)
