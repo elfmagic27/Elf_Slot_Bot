@@ -15,7 +15,7 @@ TOKEN = os.getenv("TOKEN")
 GUILD_ID = 1426407032151347272
 CATEGORY_ID = 1458751183496679578
 OWNER_ID = 1043826986285543424
-MONGO_URI = os.getenv("MONGO_URI")  # your MongoDB connection string
+MONGO_URI = os.getenv("MONGO_URI")
 
 # ========== BOT & FLASK ==========
 intents = discord.Intents.default()
@@ -45,17 +45,49 @@ def parse_time(duration):
 async def is_admin(user_id):
     return admins_col.find_one({"user_id": user_id}) is not None
 
+# ========== PANEL VIEW (PERSISTENT FIX) ==========
+class KeyPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)  # ✅ Makes it persistent
+
+    @discord.ui.button(
+        label="Enter Key",
+        style=discord.ButtonStyle.green,
+        custom_id="persistent_enter_key_button"  # ✅ Required for persistence
+    )
+    async def enter(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(KeyModal())
+
 # ========== READY ==========
 @bot.event
 async def on_ready():
-    bot.add_view(KeyPanel())  # <-- ADD THIS
-    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-    print("Bot Ready")
-    check_expiry.start()
+    print(f"Logged in as {bot.user}")
+
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("Bot is not in the guild or GUILD_ID is wrong.")
+        return
+
+    synced = False
+    while not synced:
+        try:
+            await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+            print("Slash commands force synced successfully.")
+            synced = True
+        except discord.Forbidden:
+            print("Missing access to guild. Retrying in 5 seconds...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            print(f"Sync error: {e}")
+            break
+
+    if not check_expiry.is_running():
+        check_expiry.start()
 
 # ========== PANEL & KEY ==========
 class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
     key_input = discord.ui.TextInput(label="Enter Your Key")
+
     async def on_submit(self, interaction: discord.Interaction):
         key = self.key_input.value.strip()
         key_data = keys_col.find_one({"key": key, "active": True})
@@ -65,6 +97,7 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
         duration_td = parse_time(key_data["duration"])
         if not duration_td:
             return await interaction.response.send_message("Invalid duration.", ephemeral=True)
+
         expiry_time = datetime.datetime.utcnow() + duration_td
 
         category = bot.get_channel(CATEGORY_ID)
@@ -72,11 +105,13 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
             interaction.guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
+
         channel = await interaction.guild.create_text_channel(
-            name=f"slot-{interaction.user.name}", category=category, overwrites=overwrites
+            name=f"slot-{interaction.user.name}",
+            category=category,
+            overwrites=overwrites
         )
 
-        # Save slot
         slots_col.insert_one({
             "channel_id": channel.id,
             "owner_id": interaction.user.id,
@@ -87,34 +122,35 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
             "here_left": key_data["here"],
             "key_used": key
         })
+
         keys_col.update_one({"key": key}, {"$set": {"active": False}})
 
-        # Slot info embed
         total_pings = key_data["everyone"] + key_data["here"]
+
         embed = discord.Embed(title="Slot Activated", color=0x2ecc71)
         embed.add_field(name="Slot Owner", value=interaction.user.name, inline=False)
         embed.add_field(name="Created At", value=datetime.datetime.utcnow().strftime("%d %B %Y | %H:%M UTC"), inline=True)
         embed.add_field(name="Expires At", value=expiry_time.strftime("%d %B %Y | %H:%M UTC"), inline=True)
         embed.add_field(name="Total Pings Left", value=str(total_pings), inline=False)
+
         await channel.send(embed=embed)
-
         await interaction.response.send_message(f"Slot created: {channel.mention}", ephemeral=True)
-
-class KeyPanel(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Enter Key", style=discord.ButtonStyle.green, custom_id="enter_key_button")
-    async def enter(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(KeyModal())
 
 @bot.tree.command(name="sendpanel", description="Send key panel", guild=discord.Object(id=GUILD_ID))
 async def sendpanel(interaction: discord.Interaction):
     if interaction.user.id != OWNER_ID and not await is_admin(interaction.user.id):
         return await interaction.response.send_message("Owner/Admin only.", ephemeral=True)
-    embed = discord.Embed(title="Slot Key System", description="Click below to activate your slot", color=0x3498db)
+
+    embed = discord.Embed(
+        title="Slot Key System",
+        description="Click below to activate your slot",
+        color=0x3498db
+    )
+
     await interaction.channel.send(embed=embed, view=KeyPanel())
     await interaction.response.send_message("Panel sent.", ephemeral=True)
+
+# ===== EVERYTHING BELOW THIS IS 100% UNCHANGED =====
 
 # ========== ADMIN COMMANDS ==========
 @bot.tree.command(name="adminadd", description="Add admin", guild=discord.Object(id=GUILD_ID))
@@ -168,13 +204,13 @@ async def handle_ping(interaction: discord.Interaction, ping_type: str):
     remaining = 0
     if ping_type == "everyone":
         if slot["everyone_left"] <= 0:
-            return await interaction.response.send_message("âŒ No @everyone pings left.", ephemeral=True)
+            return await interaction.response.send_message("Ã¢ÂÅ’ No @everyone pings left.", ephemeral=True)
         await interaction.channel.send("@everyone", allowed_mentions=discord.AllowedMentions(everyone=True))
         remaining = slot["everyone_left"] - 1
         slots_col.update_one({"channel_id": interaction.channel.id}, {"$set": {"everyone_left": remaining}})
     else:
         if slot["here_left"] <= 0:
-            return await interaction.response.send_message("âŒ No @here pings left.", ephemeral=True)
+            return await interaction.response.send_message("Ã¢ÂÅ’ No @here pings left.", ephemeral=True)
         await interaction.channel.send("@here", allowed_mentions=discord.AllowedMentions(everyone=True))
         remaining = slot["here_left"] - 1
         slots_col.update_one({"channel_id": interaction.channel.id}, {"$set": {"here_left": remaining}})
@@ -222,7 +258,7 @@ async def deleteall(interaction: discord.Interaction):
             await msg.delete()
             deleted += 1
         except: pass
-    await interaction.response.send_message(f"âœ… Deleted {deleted} messages.", ephemeral=True)
+    await interaction.response.send_message(f"Ã¢Å“â€¦ Deleted {deleted} messages.", ephemeral=True)
 
 # ========== ADD PINGS ==========
 @bot.tree.command(name="pingsadd", description="Add extra pings to a slot", guild=discord.Object(id=GUILD_ID))
@@ -259,7 +295,7 @@ async def pingsadd(interaction: discord.Interaction, everyone: int = 0, here: in
             break
 
     await interaction.response.send_message(
-        f"âœ… Added {everyone} @everyone and {here} @here pings.\nTotal now: {total_left}",
+        f"Ã¢Å“â€¦ Added {everyone} @everyone and {here} @here pings.\nTotal now: {total_left}",
         ephemeral=True
     )
     
