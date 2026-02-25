@@ -48,6 +48,7 @@ async def is_admin(user_id):
 # ========== READY ==========
 @bot.event
 async def on_ready():
+    bot.add_view(KeyPanel())  # <-- ADD THIS
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
     print("Bot Ready")
     check_expiry.start()
@@ -100,7 +101,10 @@ class KeyModal(discord.ui.Modal, title="Enter Slot Key"):
         await interaction.response.send_message(f"Slot created: {channel.mention}", ephemeral=True)
 
 class KeyPanel(discord.ui.View):
-    @discord.ui.button(label="Enter Key", style=discord.ButtonStyle.green)
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Enter Key", style=discord.ButtonStyle.green, custom_id="enter_key_button")
     async def enter(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(KeyModal())
 
