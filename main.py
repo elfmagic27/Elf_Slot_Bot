@@ -213,11 +213,10 @@ async def sendpanel(interaction: discord.Interaction):
         return await interaction.response.send_message(embed=err_embed("Owner / Admin only."), ephemeral=True)
 
     panel_embed = discord.Embed(
-        title="🎰  Slot Key System",
+        title="🎟️ Slot Activation",
         description=(
-            "Welcome to the Slot System.\n\n"
-            "**Click the button below** to activate your slot using your key.\n"
-            "Once activated, you will receive a private channel with your allocated pings."
+            "Click the button below to activate your slot using your ke\n"
+            "Once activated, a channel will be created for you with your allocated pings.\n"
         ),
         color=COLORS["info"]
     )
