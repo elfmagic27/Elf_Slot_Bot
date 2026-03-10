@@ -13,8 +13,8 @@ import threading
 #                  CONFIG
 # ══════════════════════════════════════════
 TOKEN       = os.getenv("TOKEN")
-GUILD_ID    = 1471717932362109082
-CATEGORY_ID = 1474439067042320528
+GUILD_ID    = 1476326508938137776
+CATEGORY_ID = 1476338544325951560
 OWNER_ID    = 1464507268438691891
 MONGO_URI   = os.getenv("MONGO_URI")
 
