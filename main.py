@@ -331,7 +331,7 @@ async def createkey(interaction: discord.Interaction, duration: str, everyone: i
     keys_col.insert_one({"key": key, "duration": duration, "everyone": everyone, "here": here, "active": True})
 
     embed = discord.Embed(title="🔑  Key Created", color=COLORS["success"])
-    embed.add_field(name="Key",        value=f"`{key}`",   inline=False)
+    embed.add_field(name="Key",        value=f"{key}",   inline=False)
     embed.add_field(name="Duration",   value=duration,     inline=True)
     embed.add_field(name="@everyone",  value=str(everyone), inline=True)
     embed.add_field(name="@here",      value=str(here),    inline=True)
