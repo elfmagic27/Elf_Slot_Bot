@@ -215,7 +215,7 @@ async def sendpanel(interaction: discord.Interaction):
     panel_embed = discord.Embed(
         title="🎟️ Slot Activation",
         description=(
-            "Click the button below to activate your slot using your ke\n"
+            "Click the button below to activate your slot using your key\n"
             "Once activated, a channel will be created for you with your allocated pings.\n"
         ),
         color=COLORS["info"]
